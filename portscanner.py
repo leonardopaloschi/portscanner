@@ -19,7 +19,7 @@ def load_well_known_ports():
 WELL_KNOWN_PORTS = load_well_known_ports()
 
 def port_scan(host, porta):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s = socket.socket(socket.AF_INET6 if ':' in host else socket.AF_INET, socket.SOCK_STREAM)
     s.settimeout(0.2)
     if s.connect_ex((host, porta)) == 0:
         service = "Desconhecido"
@@ -31,7 +31,7 @@ def port_scan(host, porta):
     s.close()
 
 def udp_scan(host, porta):
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s = socket.socket(socket.AF_INET6 if ':' in host else socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(1)
     try:
         s.sendto(b"\x00", (host, porta))
@@ -75,7 +75,7 @@ def find_connected_devices():
     print("Procurando dispositivos na rede...")
     try:
         result = subprocess.check_output(["arp", "-a"], universal_newlines=True)
-        ips = re.findall(r"\d+\.\d+\.\d+\.\d+", result)
+        ips = re.findall(r"(?:[0-9]{1,3}\.){3}[0-9]{1,3}|(?:[a-fA-F0-9]{1,4}:){1,7}[a-fA-F0-9]{1,4}", result)
         return list(set(ips))
     except subprocess.CalledProcessError:
         print("Erro ao buscar dispositivos na rede.")
@@ -114,7 +114,8 @@ def main():
 
         host = input("Digite o endereço IP ou domínio: ")
         try:
-            host_ip = socket.gethostbyname(host)
+            family = socket.AF_INET6 if ':' in host else socket.AF_INET
+            host_ip = socket.getaddrinfo(host, None, family)[0][4][0]
             portas = input(f"Digite a porta ou um range para escaneamento {protocolo} (ex: 80 ou 20-25),'all' para todas ou 'wk' para portas conhecidas(Well-Known): ")
             processes = []
             if portas == "all":
