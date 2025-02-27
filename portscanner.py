@@ -5,30 +5,35 @@ import json
 import subprocess
 import re
 
-def load_well_known_ports():
+def load_well_known_ports(filename):
     try:
-        with open("wkports.json", "r") as file:
+        with open(filename, "r") as file:
             return json.load(file)
     except FileNotFoundError:
-        print("Arquivo wkports.json não encontrado.")
+        print(f"Arquivo {filename} não encontrado.")
         sys.exit(1)
     except json.JSONDecodeError:
-        print("Erro ao decodificar o arquivo wkports.json.")
+        print(f"Erro ao decodificar o arquivo {filename}.")
         sys.exit(1)
 
-WELL_KNOWN_PORTS = load_well_known_ports()
+WELL_KNOWN_PORTS_TCP = load_well_known_ports("wktcp.json")
+WELL_KNOWN_PORTS_UDP = load_well_known_ports("wkudp.json")
 
 def port_scan(host, porta):
     s = socket.socket(socket.AF_INET6 if ':' in host else socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(0.2)
-    if s.connect_ex((host, porta)) == 0:
-        service = "Desconhecido"
-        for item in WELL_KNOWN_PORTS:
-            if item["port"] == porta and item["protocol"] == "tcp":
-                service = item["name"]
-                break
-        print(f"Porta {porta} [TCP] aberta - Serviço: {service}")
-    s.close()
+    s.settimeout(0.5)
+    try:
+        result = s.connect_ex((host, porta))
+        status = "Aberta" if result == 0 else "Fechada"
+    except socket.timeout:
+        status = "Filtrada"
+    except Exception:
+        status = "Filtrada"
+    finally:
+        s.close()
+    
+    service = next((item["name"] for item in WELL_KNOWN_PORTS_TCP if item["port"] == porta), "Desconhecido")
+    print(f"Porta {porta} [TCP] {status} - Serviço: {service}")
 
 def udp_scan(host, porta):
     s = socket.socket(socket.AF_INET6 if ':' in host else socket.AF_INET, socket.SOCK_DGRAM)
@@ -36,16 +41,18 @@ def udp_scan(host, porta):
     try:
         s.sendto(b"\x00", (host, porta))
         s.recvfrom(1024)
+        status = "Aberta"
     except socket.timeout:
-        service = "Desconhecido"
-        for item in WELL_KNOWN_PORTS:
-            if item["port"] == porta and item["protocol"] == "udp":
-                service = item["name"]
-                break
-        print(f"Porta {porta} [UDP] possivelmente aberta - Serviço: {service}")
+        status = "Filtrada"
+    except ConnectionRefusedError:
+        status = "Fechada"
     except Exception:
-        pass
-    s.close()
+        status = "Filtrada"
+    finally:
+        s.close()
+    
+    service = next((item["name"] for item in WELL_KNOWN_PORTS_UDP if item["port"] == porta), "Desconhecido")
+    print(f"Porta {porta} [UDP] {status} - Serviço: {service}")
 
 def multi_process(host, porta, scan_func, processes):
     p = multiprocessing.Process(target=scan_func, args=(host, porta))
@@ -93,9 +100,11 @@ def main():
         if opcao == "1":
             protocolo = "TCP"
             scan_func = port_scan
+            well_known_ports = WELL_KNOWN_PORTS_TCP
         elif opcao == "2":
             protocolo = "UDP"
             scan_func = udp_scan
+            well_known_ports = WELL_KNOWN_PORTS_UDP
         elif opcao == "3":
             devices = find_connected_devices()
             if not devices:
@@ -116,7 +125,7 @@ def main():
         try:
             family = socket.AF_INET6 if ':' in host else socket.AF_INET
             host_ip = socket.getaddrinfo(host, None, family)[0][4][0]
-            portas = input(f"Digite a porta ou um range para escaneamento {protocolo} (ex: 80 ou 20-25),'all' para todas ou 'wk' para portas conhecidas(Well-Known): ")
+            portas = input(f"Digite a porta ou um range para escaneamento {protocolo} (ex: 80 ou 20-25), 'all' para todas ou 'wk' para portas conhecidas (Well-Known): ")
             processes = []
             if portas == "all":
                 full_scan(host_ip, scan_func)
@@ -124,7 +133,7 @@ def main():
                 start_port, end_port = map(int, portas.split("-"))
                 range_scan(host_ip, start_port, end_port, scan_func)
             elif portas == "wk":
-                for item in WELL_KNOWN_PORTS:
+                for item in well_known_ports:
                     multi_process(host_ip, item["port"], scan_func, processes)
                 for p in processes:
                     p.join()
